@@ -223,6 +223,10 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.enable-lifecycle
+      # Lets k6 push load-test metrics in, so the generated load and the
+      # server-side effect land on one Grafana timeline:
+      #   k6 run -o experimental-prometheus-rw perf/load-test.js
+      - --web.enable-remote-write-receiver
     depends_on:
       - eureka-server
 

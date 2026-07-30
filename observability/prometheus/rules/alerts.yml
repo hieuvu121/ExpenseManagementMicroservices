@@ -52,8 +52,6 @@ groups:
         annotations:
           summary: "{{ $labels.application }} has threads waiting on a DB connection"
 
-      # The 8GB->12.2GiB change moved the knee from ~1200 to ~2000 RPS because
-      # the constraint was GC, not CPU. This alert catches that state directly.
       - alert: HighGcOverhead
         expr: jvm_gc_overhead > 0.2
         for: 5m
