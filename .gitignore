@@ -1,0 +1,68 @@
+# This is the umbrella (orchestration) repo. It tracks docker-compose.yml,
+# init-db.sql, the observability stack and the load-test harness — the things
+# that span services. Each service below is its own git repo with its own
+# GitHub remote, cloned as a sibling directory, so they are ignored here.
+ai-service/
+api-gateway/
+auth-service/
+common/
+docs/
+email-service/
+eureka-server/
+expense-service/
+frontend/
+household-service/
+mobile/
+notification-service/
+settlement-service/
+
+# --- Secrets ---
+# .env holds DB/mail credentials, JWT_SECRET and OPENAI_API_KEY.
+# perf/.env holds a live JWT written by perf/seed.sh.
+# .env.example is committed as the template.
+.env
+.env.*
+!.env.example
+perf/.env
+
+# --- Java / Maven ---
+target/
+.mvn/timing.properties
+*.jar
+*.war
+*.class
+*.log
+hs_err_pid*
+replay_pid*
+
+# --- Node ---
+node_modules/
+dist/
+build/
+.expo/
+.expo-shared/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+
+# --- Local observability state ---
+# Prometheus TSDB and Grafana's sqlite live in named docker volumes, but guard
+# against a bind-mount being added later.
+observability/prometheus/data/
+observability/grafana/data/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.settings/
+.project
+.classpath
+
+# --- OS ---
+.DS_Store
+Thumbs.db

@@ -1,0 +1,70 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    stack: expenshie-local
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  # --- Spring Boot services, discovered via Eureka ---------------------------
+  # Every service already carries an `application` label from Micrometer
+  # (management.metrics.tags.application), so nothing here sets one — a
+  # relabel writing `application` would collide and Prometheus would rename the
+  # scraped one to `exported_application`.
+  - job_name: expenshie-services
+    metrics_path: /actuator/prometheus
+    eureka_sd_configs:
+      - server: http://eureka-server:8761/eureka
+        refresh_interval: 15s
+    relabel_configs:
+      # Only scrape instances whose actuator is on its own management port.
+      # A service still running a pre-metrics image reports 8080 here, and
+      # 8080/actuator/prometheus would just 404.
+      - source_labels: [__meta_eureka_app_instance_metadata_management_port]
+        regex: "9090"
+        action: keep
+      # Eureka advertises the application port (8080). Actuator listens on
+      # management.port, which Spring Cloud publishes into instance metadata.
+      - source_labels:
+          - __meta_eureka_app_instance_ip_addr
+          - __meta_eureka_app_instance_metadata_management_port
+        separator: ":"
+        target_label: __address__
+
+  # --- Services Eureka cannot discover --------------------------------------
+  # email-service is not a Eureka client, and eureka-server does not register
+  # with itself (eureka.client.register-with-eureka=false).
+  - job_name: expenshie-static
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - email-service:9090
+          - eureka-server:9090
+
+  # --- Infrastructure exporters ---------------------------------------------
+  # cAdvisor is the recorded equivalent of `docker stats` — per-container CPU
+  # and memory over time, which is how the 2026-07-30 ceiling was attributed
+  # to api-gateway. See perf/README.md.
+  - job_name: cadvisor
+    static_configs:
+      - targets: [cadvisor:8080]
+
+  # Consumer-group lag per topic. The apps expose spring_kafka_listener_seconds
+  # (processing time) but not lag, so this is the only source for it.
+  - job_name: kafka
+    static_configs:
+      - targets: [kafka-exporter:9308]
+
+  - job_name: mysql
+    static_configs:
+      - targets: [mysqld-exporter:9104]
+
+  - job_name: redis
+    static_configs:
+      - targets: [redis-exporter:9121]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: [localhost:9090]

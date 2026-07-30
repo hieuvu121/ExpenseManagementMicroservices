@@ -1,0 +1,85 @@
+# No Alertmanager is wired up yet, so these fire into the Prometheus UI only
+# (Status -> Rules / Alerts). Thresholds come from the 2026-07-30 baseline in
+# perf/README.md: the stack is flat to ~1500 RPS with p95 ~4ms, and the usable
+# ceiling is ~2500 RPS.
+groups:
+  - name: availability
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} target {{ $labels.instance }} is down"
+
+  - name: latency
+    rules:
+      # p95 across each service. 500ms is deliberately loose — at healthy load
+      # this sits near 4ms, so crossing 500ms means real saturation.
+      - alert: HighRequestLatencyP95
+        expr: >
+          histogram_quantile(0.95,
+            sum by (le, application) (rate(http_server_requests_seconds_bucket[5m]))
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} p95 above 500ms"
+          description: "p95 is {{ $value | humanizeDuration }} over the last 5m."
+
+      - alert: ServerErrorRate
+        expr: >
+          sum by (application) (rate(http_server_requests_seconds_count{status=~"5.."}[5m]))
+          /
+          sum by (application) (rate(http_server_requests_seconds_count[5m])) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.application }} serving over 1% 5xx"
+
+  - name: resources
+    rules:
+      # Requests queuing for a DB connection. Under the 2026-07-29 N+1 bug this
+      # was the mechanism by which a query problem became a latency problem.
+      - alert: HikariPoolSaturated
+        expr: hikaricp_connections_pending > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} has threads waiting on a DB connection"
+
+      # The 8GB->12.2GiB change moved the knee from ~1200 to ~2000 RPS because
+      # the constraint was GC, not CPU. This alert catches that state directly.
+      - alert: HighGcOverhead
+        expr: jvm_gc_overhead > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} spending >20% of CPU time in GC"
+
+      - alert: JvmHeapNearMax
+        expr: >
+          sum by (application) (jvm_memory_used_bytes{area="heap"})
+          /
+          sum by (application) (jvm_memory_max_bytes{area="heap"}) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.application }} heap above 90% of max"
+
+  - name: kafka
+    rules:
+      - alert: KafkaConsumerLag
+        expr: kafka_consumergroup_lag > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer group {{ $labels.consumergroup }} lagging on {{ $labels.topic }}"
+          description: "Lag is {{ $value }} messages."
