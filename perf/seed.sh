@@ -60,6 +60,33 @@ for i in $(seq 1 "$COUNT"); do
 done
 [ "$fails" -gt 0 ] && echo "WARNING: $fails/$COUNT expense inserts failed"
 
+# Spread the expenses across several creators.
+#
+# This is not cosmetic. Every expense above is created by the same member, and
+# a page whose rows share one creator lets Hibernate's first-level cache turn
+# the per-row creator lookup in ExpenseService.toDTO() into a single query. That
+# made an N+1 invisible: on 2026-07-31 the same build measured p95 4.7ms with
+# one creator and p95 178ms with nine. A benchmark that cannot see the bug is
+# worse than no benchmark.
+#
+# Members are inserted straight into expense-service's projection table rather
+# than driven through the household join API, which would need a registration,
+# an activation-token lookup and an invite per member.
+EXTRA_MEMBERS="${EXTRA_MEMBERS:-9}"
+echo "spreading expenses across $EXTRA_MEMBERS creators"
+values=""
+for i in $(seq 1 "$EXTRA_MEMBERS"); do
+  mid=$((900000 + i))
+  [ -n "$values" ] && values="$values,"
+  values="$values($mid,$HH,$mid,'Perf Member $i','ROLE_MEMBER')"
+done
+docker exec mysql sh -c "mysql -uroot -p\"\$MYSQL_ROOT_PASSWORD\" -e \"
+  insert ignore into expense_db.household_member_summary
+    (member_id, household_id, user_id, full_name, role) values $values;
+  update expense_db.expense
+     set created_by_member_id = 900001 + (id % $EXTRA_MEMBERS)
+   where household_id = $HH;\"" 2>/dev/null
+
 cat > "$OUT" <<EOF
 JWT=$JWT
 HOUSEHOLD_ID=$HH
