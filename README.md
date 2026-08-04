@@ -2,6 +2,8 @@
 
 A full-stack household expense management platform built on a Spring Boot microservices architecture. It lets households track shared expenses, calculate settlements, receive notifications, and get AI-powered spending insights — all through a responsive React dashboard.
 
+Developed from Monolith architecture based: https://github.com/hieuvu121/ExpenseManagementApp
+
 ---
 
 ## Repositories
