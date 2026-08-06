@@ -1,0 +1,341 @@
+services:
+  mysql:
+    image: mysql:8
+    container_name: mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+      - mysql_data:/var/lib/mysql
+    mem_limit: 1200m
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.9.6
+    container_name: kafka
+    restart: unless-stopped
+    # Not published: KAFKA_ADVERTISED_LISTENERS points at the compose-internal
+    # hostname, so an off-box client could connect and then be redirected to an
+    # unreachable address anyway.
+    environment:
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+      KAFKA_KRAFT_MODE: "true"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
+      # The image defaults to -Xmx1G, which does not fit under mem_limit once
+      # the broker's direct buffers and page cache are counted.
+      KAFKA_HEAP_OPTS: "-Xmx768m -Xms768m"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    mem_limit: 1200m
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    mem_limit: 256m
+
+  eureka-server:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-eureka_server:latest
+    container_name: eureka-server
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8761:8761"
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 640m
+
+  api-gateway:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-api_gateway:latest
+    container_name: api-gateway
+    restart: unless-stopped
+    # Published so k6 can drive the gateway directly from off-box. Lock port
+    # 8080 to your own IP in the security group — this bypasses the frontend
+    # nginx and is not meant to be a public entrance.
+    ports:
+      - "8080:8080"
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      JWT_SECRET: ${JWT_SECRET}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 1g
+    depends_on:
+      - eureka-server
+      - redis
+
+  auth-service:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-auth_service:latest
+    container_name: auth-service
+    restart: unless-stopped
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      JWT_SECRET: ${JWT_SECRET}
+      DB_HOST: mysql
+      DB_NAME: auth_db
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      APP_BASE_URL: ${APP_BASE_URL}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 1g
+    depends_on:
+      mysql:
+        condition: service_healthy
+      eureka-server:
+        condition: service_started
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  household-service:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-household_service:latest
+    container_name: household-service
+    restart: unless-stopped
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      DB_HOST: mysql
+      DB_NAME: household_db
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 1g
+    depends_on:
+      mysql:
+        condition: service_healthy
+      eureka-server:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  expense-service:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-expense_service:latest
+    container_name: expense-service
+    restart: unless-stopped
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      DB_HOST: mysql
+      DB_NAME: expense_db
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 1g
+    depends_on:
+      mysql:
+        condition: service_healthy
+      eureka-server:
+        condition: service_started
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  settlement-service:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-settlement_service:latest
+    container_name: settlement-service
+    restart: unless-stopped
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      DB_HOST: mysql
+      DB_NAME: settlement_db
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 640m
+    depends_on:
+      mysql:
+        condition: service_healthy
+      eureka-server:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  ai-service:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-ai_service:latest
+    container_name: ai-service
+    restart: unless-stopped
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 640m
+    depends_on:
+      - eureka-server
+      - kafka
+
+  notification-service:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-notification_service:latest
+    container_name: notification-service
+    restart: unless-stopped
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 640m
+    depends_on:
+      - eureka-server
+      - kafka
+
+  email-service:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-email_service:latest
+    container_name: email-service
+    restart: unless-stopped
+    environment:
+      EUREKA_SERVER_URL: http://eureka-server:8761/eureka
+      DB_URL: jdbc:mysql://mysql:3306/email_db
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      MAIL_FROM_EMAIL: ${MAIL_FROM_EMAIL}
+      MAIL_HOST: ${MAIL_HOST}
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 640m
+    depends_on:
+      mysql:
+        condition: service_healthy
+      eureka-server:
+        condition: service_started
+      kafka:
+        condition: service_started
+
+  # The only public entrance. Serves the SPA and reverse-proxies /app/v1 and
+  # /ws to the gateway, so the browser stays same-origin and no API host is
+  # baked into the JS bundle — the image runs unchanged on any IP or domain.
+  frontend:
+    image: ${DOCKERHUB_USERNAME}/expensemanagementapp-frontend:latest
+    container_name: frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    mem_limit: 128m
+    depends_on:
+      - api-gateway
+
+  # --- Observability ---------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./observability/prometheus:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+      - --web.enable-remote-write-receiver
+    mem_limit: 768m
+    depends_on:
+      - eureka-server
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: grafana
+    restart: unless-stopped
+    # Loopback only — reach it with an SSH tunnel. The admin password below is
+    # safe solely because of that; change it before ever publishing this port.
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    mem_limit: 320m
+    depends_on:
+      - prometheus
+
+  # Unlike on Docker Desktop, cAdvisor can reach the Docker API on a real Linux
+  # host, so metrics here carry proper `name`/`image` labels. Dashboard panels
+  # that fall back to Micrometer's process_cpu_usage still work; the container_*
+  # series simply become usable as well.
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    command:
+      - --housekeeping_interval=10s
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    mem_limit: 256m
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: kafka-exporter
+    # depends_on only waits for the container to start, not for the broker to
+    # accept connections, and this exporter exits rather than retrying.
+    restart: unless-stopped
+    command:
+      - --kafka.server=kafka:9092
+    mem_limit: 128m
+    depends_on:
+      - kafka
+
+  mysqld-exporter:
+    image: prom/mysqld-exporter:v0.15.1
+    container_name: mysqld-exporter
+    restart: unless-stopped
+    environment:
+      MYSQLD_EXPORTER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    command:
+      - --mysqld.address=mysql:3306
+      - --mysqld.username=root
+    mem_limit: 128m
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.67.0
+    container_name: redis-exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    mem_limit: 128m
+    depends_on:
+      - redis
+
+
+volumes:
+  mysql_data:
+  kafka_data:
+  prometheus_data:
+  grafana_data:
