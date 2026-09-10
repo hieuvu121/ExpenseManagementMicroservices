@@ -1,3 +1,11 @@
+# Memory is bounded here as it is in docker-compose.prod.yml. Without a
+# mem_limit a JVM sizes its heap from the whole Docker VM (12.2 GiB here), so
+# one service under load can exhaust the VM and take the others down with it -
+# which is exactly how api-gateway reached 3.4 GiB and was OOM-killed during
+# load testing. MaxRAMPercentage=70 makes each JVM size its heap from its own
+# limit instead. Values are prod's, raised where measurement justified it:
+# expense-service allocates the most, api-gateway is bounded by its in-flight
+# limiter and peaked at 553 MiB with it active.
 services:
   mysql:
     image: mysql:8
@@ -14,6 +22,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    mem_limit: 1200m
 
   kafka:
     image: confluentinc/cp-kafka:7.9.6
@@ -34,25 +43,30 @@ services:
       KAFKA_LOG_DIRS: /tmp/kraft-combined-logs
     volumes:
       - kafka_data:/var/lib/kafka/data
+    mem_limit: 1200m
 
   redis:
     image: redis:latest
     container_name: redis
     ports:
       - "6379:6379"
+    mem_limit: 256m
 
   eureka-server:
     build: ./eureka-server
     container_name: eureka-server
     ports:
       - "8761:8761"
+    environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
+    mem_limit: 640m
 
   api-gateway:
     build: ./api-gateway
     container_name: api-gateway
     ports:
       - "8080:8080"
-    # frontend/nginx.conf balances across api-gateway-1 / api-gateway-2 and
+    # pa_frontend/nginx.conf balances across api-gateway-1 / api-gateway-2 and
     # resolves both names at boot, so dev — which runs a single gateway — hands
     # the one container both names. nginx then round-robins to the same place,
     # and the one config file works unchanged in dev and prod.
@@ -62,6 +76,7 @@ services:
           - api-gateway-1
           - api-gateway-2
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       JWT_SECRET: ${JWT_SECRET}
       REDIS_HOST: redis
@@ -70,6 +85,7 @@ services:
     depends_on:
       - eureka-server
       - redis
+    mem_limit: 1g
 
   auth-service:
     build:
@@ -77,6 +93,7 @@ services:
       dockerfile: auth-service/Dockerfile
     container_name: auth-service
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       JWT_SECRET: ${JWT_SECRET}
       DB_HOST: mysql
@@ -96,6 +113,7 @@ services:
         condition: service_started
       redis:
         condition: service_started
+    mem_limit: 768m
 
   household-service:
     build:
@@ -103,6 +121,7 @@ services:
       dockerfile: household-service/Dockerfile
     container_name: household-service
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       DB_HOST: mysql
       DB_NAME: household_db
@@ -116,6 +135,7 @@ services:
         condition: service_started
       kafka:
         condition: service_started
+    mem_limit: 1g
 
   expense-service:
     build:
@@ -123,6 +143,7 @@ services:
       dockerfile: expense-service/Dockerfile
     container_name: expense-service
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       DB_HOST: mysql
       DB_NAME: expense_db
@@ -140,6 +161,7 @@ services:
         condition: service_started
       redis:
         condition: service_started
+    mem_limit: 1536m
 
   settlement-service:
     build:
@@ -147,6 +169,7 @@ services:
       dockerfile: settlement-service/Dockerfile
     container_name: settlement-service
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       DB_HOST: mysql
       DB_NAME: settlement_db
@@ -160,6 +183,7 @@ services:
         condition: service_started
       kafka:
         condition: service_started
+    mem_limit: 640m
 
   ai-service:
     build:
@@ -167,12 +191,14 @@ services:
       dockerfile: ai-service/Dockerfile
     container_name: ai-service
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       OPENAI_API_KEY: ${OPENAI_API_KEY}
     depends_on:
       - eureka-server
       - kafka
+    mem_limit: 640m
 
   notification-service:
     build:
@@ -180,16 +206,19 @@ services:
       dockerfile: notification-service/Dockerfile
     container_name: notification-service
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
     depends_on:
       - eureka-server
       - kafka
+    mem_limit: 640m
 
   email-service:
     build: ./email-service
     container_name: email-service
     environment:
+      JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
       EUREKA_SERVER_URL: http://eureka-server:8761/eureka
       DB_URL: jdbc:mysql://mysql:3306/email_db
       DB_USERNAME: ${DB_USERNAME}
@@ -206,10 +235,11 @@ services:
         condition: service_started
       kafka:
         condition: service_started
+    mem_limit: 640m
 
   frontend:
     build: ./frontend
-    container_name: frontend
+    container_name: pa_frontend
     ports:
       - "5173:80"
     depends_on:
@@ -219,6 +249,7 @@ services:
   # The services expose /actuator/prometheus on port 9090, which is deliberately
   # not published to the host — Prometheus reaches it over the compose network.
   # See observability/prometheus/prometheus.yml.
+    mem_limit: 128m
   prometheus:
     image: prom/prometheus:v3.1.0
     container_name: prometheus
@@ -238,6 +269,7 @@ services:
       - --web.enable-remote-write-receiver
     depends_on:
       - eureka-server
+    mem_limit: 768m
 
   grafana:
     image: grafana/grafana:11.5.1
@@ -265,6 +297,7 @@ services:
   #
   # Because of this the dashboard uses Micrometer's process_cpu_usage for
   # per-service CPU, which is tagged with `application` and works everywhere.
+    mem_limit: 320m
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     container_name: cadvisor
@@ -279,6 +312,7 @@ services:
 
   # Consumer-group lag per topic. The apps report listener processing time but
   # cannot report their own lag.
+    mem_limit: 256m
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.7.0
     container_name: kafka-exporter
@@ -290,6 +324,7 @@ services:
       - --kafka.server=kafka:9092
     depends_on:
       - kafka
+    mem_limit: 128m
 
   mysqld-exporter:
     image: prom/mysqld-exporter:v0.15.1
@@ -302,6 +337,7 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    mem_limit: 128m
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.67.0
@@ -310,6 +346,7 @@ services:
       REDIS_ADDR: redis://redis:6379
     depends_on:
       - redis
+    mem_limit: 128m
 
 
 volumes:
