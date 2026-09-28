@@ -1,5 +1,8 @@
 # Setup Guide
 
+Getting the stack running. For *why* it is built this way, see
+[design/](./design/).
+
 ## Prerequisites
 
 Install the following before getting started:
@@ -24,7 +27,12 @@ cd ExpenseManagement-Microservices
 
 ### 2. Clone all service repositories
 
+`common` must be cloned too — every service's Dockerfile copies `common/src`
+from the build context and installs it before building, so `docker compose up
+--build` fails without it.
+
 ```bash
+git clone https://github.com/hieuvu121/expenshie-common.git               common
 git clone https://github.com/hieuvu121/expenshie-eureka-server.git        eureka-server
 git clone https://github.com/hieuvu121/expenshie-api-gateway.git          api-gateway
 git clone https://github.com/hieuvu121/expenshie-auth-service.git         auth-service
@@ -34,21 +42,30 @@ git clone https://github.com/hieuvu121/expenshie-settlement-service.git   settle
 git clone https://github.com/hieuvu121/expenshie-notification-service.git notification-service
 git clone https://github.com/hieuvu121/EmailService.git                    email-service
 git clone https://github.com/hieuvu121/expenshie-ai-service.git           ai-service
-git clone https://github.com/hieuvu121/expenshie-frontend.git             frontend
+git clone https://github.com/hieuvu121/expenshie-frontend.git             pa_frontend
 ```
+
+> **Note:** `docker-compose.yml` currently builds `./frontend`, so if you are
+> using Docker the directory has to be named `frontend` until that build path
+> is updated.
 
 ### 3. Add the shared configuration files
 
-Place the following files in the root of `ExpenseManagement-Microservices/` (not inside any service folder):
+These live in the root of `ExpenseManagement-Microservices/`, not inside any
+service folder. Clone the umbrella repo into the parent folder, or copy them
+across:
 
-- `docker-compose.yml` — orchestrates all services and infrastructure
-- `init-db.sql` — creates the MySQL databases on first start
-- `.env` — your environment variables (see [Configure environment variables](#configure-environment-variables) below)
+- `docker-compose.yml` — the local stack
+- `docker-compose.prod.yml` — image-based, for the single-EC2 deployment
+- `init-db.sql` — creates the five MySQL schemas on first start
+- `.env.example` — template; copy to `.env` and fill in
+- `design/`, `observability/`, `perf/` — design notes, Prometheus/Grafana config, k6 harness
 
 Your folder should now look like this:
 
 ```
 ExpenseManagement-Microservices/
+├── common/                  ← shared event contracts; built first
 ├── eureka-server/
 ├── api-gateway/
 ├── auth-service/
@@ -59,16 +76,30 @@ ExpenseManagement-Microservices/
 ├── email-service/
 ├── ai-service/
 ├── frontend/
+├── mobile/                  ← optional, Expo app
+│
+├── design/                  ← design notes
+├── observability/           ← Prometheus + Grafana config
+├── perf/                    ← k6 load tests and seed script
+│
 ├── docker-compose.yml
+├── docker-compose.prod.yml
 ├── init-db.sql
-└── .env
+├── .env.example
+└── .env                     ← never commit this
 ```
 
 ---
 
 ## Configure Environment Variables
 
-Create a `.env` file in the project root with the following content, replacing placeholder values with your own:
+Copy the template and fill it in:
+
+```bash
+cp .env.example .env
+```
+
+`.env.example` is the authoritative list. For reference, it contains:
 
 ```env
 # Database
@@ -126,6 +157,8 @@ docker compose up
 | http://localhost:8761 | Eureka dashboard — all services listed as UP |
 | http://localhost:8080 | API Gateway — returns 401 on unauthenticated requests |
 | http://localhost:5173 | Frontend application login screen |
+| http://localhost:9090 | Prometheus — all service targets UP |
+| http://localhost:3000 | Grafana — dashboards provisioned automatically |
 
 ### Stop services
 
@@ -153,7 +186,21 @@ MySQL initializes automatically on first start using `init-db.sql`. The followin
 | `settlement_db` | settlement-service |
 | `email_db` | email-service |
 
-Each service manages its own schema via JPA/Hibernate on startup — no manual migrations needed.
+Each service creates its own tables on startup via
+`spring.jpa.hibernate.ddl-auto=update`.
+
+> **This adds missing tables and columns. It never alters an existing one.**
+>
+> A brand-new database is fine. An existing one will *not* pick up a changed
+> column type or a new value added to a `@Enumerated` column — the application
+> starts cleanly and then fails at runtime with "Data truncated for column" or
+> "Data too long for column". Those need a manual `ALTER`.
+>
+> If you are recreating a local stack, the simplest fix is to throw the volume
+> away: `docker compose down -v`.
+>
+> See [design/08-schema-management.md](./design/08-schema-management.md) for the
+> three bugs this has caused and the recommendation to adopt Flyway.
 
 ---
 
@@ -198,14 +245,25 @@ mvn spring-boot:run
 
 Adjust `DB_NAME` and variables per service. Refer to the table below for which variables each service needs.
 
+Build `common` first, or any service depending on it will not resolve:
+
+```bash
+mvn -f common/pom.xml install -DskipTests
+```
+
 **Startup order:**
 1. `eureka-server` — must be running first
 2. Everything else — in any order after Eureka is up
 
+> Most services target **Java 21**. `email-service` is on Spring Boot 4 and
+> targets **Java 17** — it builds fine on 21 but is the odd one out if you hit
+> a toolchain error.
+
 ### 3. Run the frontend locally
 
+From the frontend directory:
+
 ```bash
-cd frontend
 npm install
 npm run dev
 ```
@@ -265,6 +323,30 @@ The dev server starts at http://localhost:5173 and proxies API calls to http://l
 - Verify `OPENAI_API_KEY` is valid and has available quota.
 - The ai-service logs will show the specific OpenAI error response.
 
+**"Data truncated for column" or "Data too long for column" at runtime**
+- The schema predates a code change and `ddl-auto=update` cannot fix it. Either
+  `docker compose down -v` to start clean, or `ALTER` the column by hand. See
+  [design/08-schema-management.md](./design/08-schema-management.md).
+
+**A service starts but the gateway returns 503**
+- Eureka registration takes a few seconds after boot, and the gateway caches the
+  registry. Wait ~30s, or check http://localhost:8761 for the service.
+
 **Port conflicts**
-- Default ports in use: `3306` (MySQL), `6379` (Redis), `9092` (Kafka), `8761` (Eureka), `8080` (Gateway), `5173` (Frontend).
-- Stop any local processes using those ports before running Docker Compose.
+- Default published ports: `3306` (MySQL), `6379` (Redis), `9092` (Kafka),
+  `8761` (Eureka), `8080` (Gateway), `5173` (Frontend), `9090` (Prometheus),
+  `3000` (Grafana).
+- Stop the local process, or drop the publishing you do not need with an
+  override file — only the gateway is required from the host:
+
+  ```yaml
+  # compose.local.yml
+  services:
+    mysql:
+      ports: !override []
+    redis:
+      ports: !override []
+  ```
+  ```bash
+  docker compose -f docker-compose.yml -f compose.local.yml up -d
+  ```
