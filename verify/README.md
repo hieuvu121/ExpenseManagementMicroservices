@@ -77,9 +77,49 @@ is *supposed* to produce divergent ledgers — that is the measurement. So
 afterwards. The suites use `divergent_count "$HOUSEHOLD"` to scope to their own
 data. Clear the evidence with `docker compose down -v`.
 
+### The approve-versus-reverse race — attempted, not landed
+
+`race-approve-vs-reverse.sh` drives an approval into the window between
+`ReversalDecisionService`'s read and its write. Across **175 races** at aim
+points from 110ms to 1500ms, with the window widened two ways (an expense with
+40 settlements, and a deliberate `Thread.sleep` inserted between the read and
+the write), it produced:
+
+| | |
+|---|---|
+| races run | 175 |
+| optimistic-lock conflicts observed | **0** |
+| violations (paid debt voided) | **0** |
+| ledger divergence | **0** |
+
+**Zero violations, but also zero conflicts — so this does not yet demonstrate
+that `@Version` is what prevented them.** Every race resolved cleanly one side
+or the other: either the approval committed first and the reversal correctly
+refused, or the reversal voided first and the approval was correctly rejected.
+The script is committed because the harness is sound and the calibration is
+worth keeping, not because the number proves anything yet.
+
+Two things make the window hard to hit from outside:
+
+- **The outbox poll interval (500ms) dominates the timing.** The reversal
+  travels HTTP → outbox poll → Kafka → `decide()`, so the read lands anywhere
+  in a ~500ms band. A fixed aim cannot sit inside a window whose start jitters
+  further than the window is wide.
+- **Process launch jitter is ~100ms.** Asking for an approval at 500ms fires it
+  at ~600ms, which is coarser than the natural window.
+
+Calibration note for anyone continuing: measuring latency by polling MySQL
+through `docker exec` adds ~150ms per query and badly inflates the numbers.
+The first several aim points were chosen from polluted measurements and all
+landed outside the window as a result.
+
+**The claim is currently supported at the unit level, not end to end.**
+`settlement-service`'s `SettlementConcurrencyTest` drives two real transactions
+and proves both directions of the lost update, verified honestly: remove
+`@Version` and both race tests fail, restore it and they pass. Reproducing that
+through the full pipeline is unfinished.
+
 ## Not built yet
 
-The fault-injection matrix — duplicate delivery, crash at the saga pivot,
-broker outage, and the concurrent approve-versus-reverse race. That last one is
-the only remaining claim with a real before/after number available
-(`@Version` conflicts resolving to `REFUSED` rather than voiding a paid debt).
+The rest of the fault-injection matrix: duplicate delivery, crash at the saga
+pivot, and broker outage.
