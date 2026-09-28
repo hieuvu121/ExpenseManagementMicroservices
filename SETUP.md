@@ -45,10 +45,6 @@ git clone https://github.com/hieuvu121/expenshie-ai-service.git           ai-ser
 git clone https://github.com/hieuvu121/expenshie-frontend.git             frontend
 ```
 
-> The directory must be `frontend`: that is the build context in
-> `docker-compose.yml` and the path `.gitignore` excludes. `pa_frontend` is the
-> container's name, not a folder.
-
 ### 3. Add the shared configuration files
 
 These live in the root of `ExpenseManagement-Microservices/`, not inside any
