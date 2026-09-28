@@ -42,12 +42,12 @@ git clone https://github.com/hieuvu121/expenshie-settlement-service.git   settle
 git clone https://github.com/hieuvu121/expenshie-notification-service.git notification-service
 git clone https://github.com/hieuvu121/EmailService.git                    email-service
 git clone https://github.com/hieuvu121/expenshie-ai-service.git           ai-service
-git clone https://github.com/hieuvu121/expenshie-frontend.git             pa_frontend
+git clone https://github.com/hieuvu121/expenshie-frontend.git             frontend
 ```
 
-> **Note:** `docker-compose.yml` currently builds `./frontend`, so if you are
-> using Docker the directory has to be named `frontend` until that build path
-> is updated.
+> The directory must be `frontend`: that is the build context in
+> `docker-compose.yml` and the path `.gitignore` excludes. `pa_frontend` is the
+> container's name, not a folder.
 
 ### 3. Add the shared configuration files
 
@@ -261,9 +261,8 @@ mvn -f common/pom.xml install -DskipTests
 
 ### 3. Run the frontend locally
 
-From the frontend directory:
-
 ```bash
+cd frontend
 npm install
 npm run dev
 ```

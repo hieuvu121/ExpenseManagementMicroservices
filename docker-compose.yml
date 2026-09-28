@@ -66,7 +66,7 @@ services:
     container_name: api-gateway
     ports:
       - "8080:8080"
-    # pa_frontend/nginx.conf balances across api-gateway-1 / api-gateway-2 and
+    # frontend/nginx.conf balances across api-gateway-1 / api-gateway-2 and
     # resolves both names at boot, so dev — which runs a single gateway — hands
     # the one container both names. nginx then round-robins to the same place,
     # and the one config file works unchanged in dev and prod.

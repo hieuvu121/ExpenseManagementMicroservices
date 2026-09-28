@@ -61,7 +61,8 @@ services:
       JAVA_TOOL_OPTIONS: "-XX:MaxRAMPercentage=70"
     mem_limit: 640m
 
-  # Two gateway replicas, balanced by the frontend nginx (see frontend/nginx.conf).
+  # Two gateway replicas, balanced by the frontend container's nginx
+  # (see frontend/nginx.conf; the container is named pa_frontend).
   # Written as two named services rather than `--scale api-gateway=2` because
   # scaling cannot coexist with container_name or a fixed host port publish, and
   # nginx needs stable per-replica DNS names for its upstream block.
@@ -262,7 +263,7 @@ services:
   # baked into the JS bundle — the image runs unchanged on any IP or domain.
   frontend:
     image: ${DOCKERHUB_USERNAME}/expensemanagementapp-frontend:latest
-    container_name: frontend
+    container_name: pa_frontend
     restart: unless-stopped
     ports:
       - "80:80"
