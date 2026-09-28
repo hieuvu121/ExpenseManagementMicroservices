@@ -1,0 +1,12 @@
+# Drops host port publishing for services this harness never reaches directly.
+#
+# A developer machine commonly already has MySQL on 3306, a Redis on 6379 and a
+# dev server on 5173. Only the gateway on 8080 is needed from the host --
+# everything else is reached over the compose network or via `docker exec`.
+#
+#   docker compose -f docker-compose.yml -f verify/compose.local.yml up -d
+services:
+  mysql:
+    ports: !override []
+  redis:
+    ports: !override []

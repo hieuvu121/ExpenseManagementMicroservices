@@ -177,6 +177,7 @@ ExpenseManagement-Microservices/
 ├── mobile/                  ← Expo app
 │
 ├── design/                  ← design notes (tracked here)
+├── verify/                  ← cross-service correctness checks and the ledger oracle
 ├── observability/           ← Prometheus config, Grafana dashboards, alert rules
 ├── perf/                    ← k6 load-test harness and seed script
 │
@@ -187,8 +188,8 @@ ExpenseManagement-Microservices/
 └── SETUP.md
 ```
 
-Only `design/`, `observability/`, `perf/`, the compose files, `init-db.sql` and
-the docs live in this repo — the service directories are separate repositories
+Only `design/`, `verify/`, `observability/`, `perf/`, the compose files,
+`init-db.sql` and the docs live in this repo — the service directories are separate repositories
 and are gitignored here.
 
 ---
@@ -204,6 +205,10 @@ docker compose up -d --build
 
 Load testing: [`perf/README.md`](./perf/README.md) — `./perf/seed.sh` then
 `k6 run perf/load-test.js`.
+
+Correctness: [`verify/README.md`](./verify/README.md) — `./verify/reconcile.sh`
+checks the expense and settlement ledgers against each other, and the two e2e
+suites cover the reversal saga and the platform invariants.
 
 > **Schema note.** Services run `spring.jpa.hibernate.ddl-auto=update`, which
 > adds missing tables and columns but never alters an existing one. A fresh
