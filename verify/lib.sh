@@ -68,10 +68,14 @@ await_projections() {
   return 1
 }
 
-# An admin's own expense is born APPROVED and publishes only EXPENSE_CREATED,
-# so it never reaches settlement-service and produces no debt. A member's
-# expense starts PENDING, and the admin's approval is what publishes
-# EXPENSE_APPROVED. Anything needing real settlements must create as a member.
+# Creates as a member, so the expense starts PENDING and a separate admin
+# approval publishes EXPENSE_APPROVED. That keeps the two-step path -- create,
+# then approve -- under test, which is the one the saga scenarios exercise.
+#
+# An admin's own expense is APPROVED on creation and now publishes
+# EXPENSE_APPROVED too, so it produces settlements as well; before that fix it
+# silently produced none, and creating as a member was the only way to get a
+# debt at all.
 # $1 member-jwt, $2 householdId, $3 amount, $4 memberA, $5 memberB -> expenseId
 create_expense_as_member() {
   local half=$(( $3 / 2 ))

@@ -57,11 +57,14 @@ which is why the oracle has to read across both.
 belonging to the expense creator, so a single-member household produces no
 debts and there is nothing to measure.
 
-**Expenses must be created by a member, not the admin.**
-`ExpenseService.createExpense` marks an admin's own expense `APPROVED`
-immediately and publishes only `EXPENSE_CREATED` — it never reaches
-settlement-service, so no debt exists. A member's expense starts `PENDING`, and
-the admin's approval is what publishes `EXPENSE_APPROVED`.
+**Two ways to reach `APPROVED`.** A member's expense starts `PENDING` and the
+admin's approval publishes `EXPENSE_APPROVED`; an admin's own expense is
+`APPROVED` on creation and publishes it immediately. Both produce settlements.
+The suites create as a member on purpose, to keep the two-step path under test.
+
+Until recently the second path published only `EXPENSE_CREATED`, so an admin's
+own expense produced no debt at all and creating as a member was the only way
+to get a settlement. If you are reading an older harness, that is why.
 
 **Wait for both membership projections.** expense-service validates splits
 against its copy and settlement-service authorizes against its own. `lib.sh`'s
