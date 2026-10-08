@@ -82,6 +82,28 @@ check "no auth header is rejected" \
   "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/settlements/$MEM_A/$HH")" "401"
 
 echo
+echo "== both approval paths produce debt =="
+# The boundary fix. An admin's own expense is APPROVED on creation rather than
+# going through the approve endpoint, and used to publish only
+# EXPENSE_CREATED -- which settlement-service ignores, so the debt was never
+# created and neither service could tell. This is the path no unit test reaches.
+ADMIN_EXP=$(curl -sf -X POST "$BASE/households/$HH/expenses" -H "Authorization: Bearer $JWT_A" \
+  -H 'Content-Type: application/json' \
+  -d "{\"amount\":60,\"date\":\"$(date +%F)\",\"category\":\"AdminPath\",\"currency\":\"VND\",\"method\":\"AMOUNT\",\"splits\":[{\"memberId\":$MEM_A,\"amount\":30},{\"memberId\":$MEM_B,\"amount\":30}]}" \
+  | jqv 'd["id"]')
+check "admin's own expense is born APPROVED" \
+  "$(sql "select status from expense_db.expense where id=$ADMIN_EXP;")" "APPROVED"
+for _ in $(seq 1 30); do
+  an=$(sql "select count(*) from settlement_db.settlements where expense_id=$ADMIN_EXP;")
+  [ "${an:-0}" -ge 1 ] && break; sleep 1
+done
+check "it produced a settlement without any approve call" "${an:-0}" "1"
+# createSettlementsForExpense skips the creator's own split, so B owes A.
+check "the debtor is the other member" \
+  "$(sql "select from_member_id from settlement_db.settlements where expense_id=$ADMIN_EXP;")" "$MEM_B"
+check "the ledger agrees on it" "$(divergent_count "$HH")" "0"
+
+echo
 echo "== membership removal propagates =="
 curl -s -o /dev/null -X DELETE "$BASE/households/$HH/members/$MEM_B" -H "Authorization: Bearer $JWT_A"
 for _ in $(seq 1 30); do

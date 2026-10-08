@@ -109,9 +109,9 @@ divergent_count() {
     left join (select s.expense_id, sum(s.amount) a from settlement_db.settlements s
                where s.status<>'VOIDED' group by s.expense_id) st on st.expense_id=e.id
     where $scope (
-         (e.status='APPROVED' and coalesce(sp.x,0)<>coalesce(st.a,0))
+         (e.status in ('APPROVED','REVERSING') and coalesce(sp.x,0)<>coalesce(st.a,0))
       or (e.status='REVERSED' and coalesce(st.a,0)<>0)
-      or (e.status in ('PENDING','REJECTED','REVERSING') and coalesce(st.a,0)<>0))) t;"
+      or (e.status in ('PENDING','REJECTED') and coalesce(st.a,0)<>0))) t;"
 }
 
 summary() {

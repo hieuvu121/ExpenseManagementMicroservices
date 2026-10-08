@@ -33,10 +33,14 @@ LEFT JOIN (SELECT s.expense_id, SUM(s.amount) AS actual
            GROUP BY s.expense_id) st ON st.expense_id = e.id
 
 WHERE
-      -- an approved expense whose debts do not match its splits
-      (e.status = 'APPROVED'  AND COALESCE(sp.expected,0) <> COALESCE(st.actual,0))
+      -- an approved expense whose debts do not match its splits.
+      -- REVERSING counts as approved: the reversal is in flight and the debt
+      -- legitimately still stands until settlement-service voids it. Treating
+      -- it as "must owe nothing" reported every in-flight saga as divergent,
+      -- with a drift of 0.00 -- a false alarm that says the opposite of drift.
+      (e.status IN ('APPROVED','REVERSING') AND COALESCE(sp.expected,0) <> COALESCE(st.actual,0))
       -- a reversed expense must owe nothing
    OR (e.status = 'REVERSED'  AND COALESCE(st.actual,0) <> 0)
-      -- an unapproved expense must have produced no debt at all
-   OR (e.status IN ('PENDING','REJECTED','REVERSING') AND COALESCE(st.actual,0) <> 0)
+      -- an expense that was never approved must have produced no debt at all
+   OR (e.status IN ('PENDING','REJECTED') AND COALESCE(st.actual,0) <> 0)
 ORDER BY e.id;
