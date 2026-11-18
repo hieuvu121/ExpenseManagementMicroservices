@@ -45,7 +45,15 @@ admin: POST /households/{h}/expenses/{e}/reversal
 
   expense:    ACCEPTED → REVERSED, saga COMPLETED
               REFUSED  → APPROVED, saga CANCELLED + reason  ← COMPENSATION
+              expense not REVERSING → saga FAILED + reason   ← needs a human
 ```
+
+`FAILED` is for a reply that can never apply: the saga is open but the expense
+has already left `REVERSING`. Throwing would only redeliver the same reply
+forever, so the saga is closed instead and the reason records what
+settlement-service answered — for `ACCEPTED`, which settlements are already
+voided; for `REFUSED`, its own reason — next to the aggregate's explanation.
+The expense is left untouched, and nothing re-requests a `FAILED` saga.
 
 ## The three things that make it correct
 
@@ -74,7 +82,10 @@ since nothing un-voids.
 
 ## Concurrency
 
-`@Transactional` does **not** make check-then-void atomic. Under InnoDB
+Three races, all closed the same way — a `@Version` column, so the later commit
+of two that read the same row fails instead of overwriting.
+
+**Settlement side: check-then-void.** `@Transactional` does **not** make check-then-void atomic. Under InnoDB
 REPEATABLE READ the `SELECT` is a consistent non-locking read while the `UPDATE`
 is a current read, so an approval committing in the gap is silently
 overwritten — a paid debt becomes `VOIDED`. Symmetric, too: `approveSettlement`
@@ -87,12 +98,44 @@ silently. The loser needs no handling: a conflict rolls back the decision and
 its outbox reply together, which looks exactly like a lost reply, so the sweep
 retries into the correct `REFUSED`.
 
+**Expense side: two admins reversing at once.** `startReversal()` checks
+`APPROVED` on the copy each transaction loaded, so two requests that both read
+`APPROVED` both pass it — an in-memory check cannot see the other transaction.
+`ExpenseEntity.version` makes the second commit fail, and the saga row and
+outbox request it wrote roll back with it. A request arriving after the first
+committed reads `REVERSING` and is refused by the aggregate itself, or returns
+the saga already in flight.
+
+**Expense side: the sweep against the reply.** `ReversalReRequestSweep` and the
+reply consumer both write the same `expense_reversal` row while the saga is
+open, from different threads. Hibernate updates every column, so a sweep
+committing after the reply would write its stale `AWAITING_SETTLEMENT` over
+`COMPLETED` and reopen a finished saga. Rare in steady state — a reply normally
+lands long before the 60-second timeout — but most likely exactly when the
+system is recovering: after a restart the consumer replays its backlog from
+`earliest` while the first sweep finds the same sagas overdue.
+`ExpenseReversal.version` closes it. A losing sweep rolls back its whole batch
+and the next one no longer selects the saga; a losing reply is retried.
+
+**Retrying the loser.** The reply listener's error handler backs off
+exponentially (200 ms doubling to 5 s, five retries) on optimistic-lock
+conflicts, and does not retry `InvalidExpenseStatusException`, which gives the
+same answer every time. A record dropped after the last retry is not lost: the
+saga is still open, so the sweep asks again and settlement-service replays its
+decision. Spring's default — ten attempts with no pause — would have spent
+every retry inside the conflicting transaction's lifetime.
+
 ## State machines
 
 ```
 PENDING ──▶ APPROVED ──▶ REVERSING ──▶ REVERSED   (terminal)
-                 ▲            │
-                 └────────────┘  REFUSED = compensation
+   │             ▲            │
+   │             └────────────┘  REFUSED = compensation
+   └──▶ REJECTED (terminal)
+
+AWAITING_SETTLEMENT ──▶ COMPLETED   (terminal)
+                    ──▶ CANCELLED   (terminal, keeps settlement's reason)
+                    ──▶ FAILED      (terminal, needs a human)
 
 PENDING / AWAITING_APPROVAL ──▶ VOIDED   (terminal)
 COMPLETED ──▶ (no transition)            ← THE VETO
@@ -106,14 +149,33 @@ COMPLETED ──▶ (no transition)            ← THE VETO
   the same settlements means one is refused for the other's work
 - `updateExpense` is `PENDING`-only
 
+On the expense side these are no longer `if` statements in the service. Every
+transition is a method on the aggregate that checks its precondition —
+`startReversal`, `completeReversal`, `cancelReversal`, `approve`, `reject`,
+`updateExpense` on `ExpenseEntity`; `complete`, `cancel`, `markFailed`,
+`recordReRequest` on `ExpenseReversal` — and neither entity has setters, so
+there is no other way to change state. A refused transition is
+`InvalidExpenseStatusException`, returned as **409**: the request is valid, it
+conflicts with the current state. See [note 10](10-aggregates.md).
+
 ## Not done
 
 Clients have no Reverse button and no rendering for `REVERSING` / `REVERSED`.
-Nothing alerts on a saga stuck in `AWAITING_SETTLEMENT`.
+Nothing alerts on a saga stuck in `AWAITING_SETTLEMENT`, or on one closed as
+`FAILED` — today both are an ERROR log line and a row to query for.
+
+The sweep runs every saga it selects in one transaction, so a single conflict
+rolls back the whole batch's re-requests until the next pass. Harmless at this
+volume. With more than one expense-service instance, every instance sweeps the
+same rows; the version keeps that correct but not cheap, and
+`FOR UPDATE SKIP LOCKED` or a scheduler lock would be the fix.
 
 ## Where the code lives
 
 - `expense-service/.../service/ExpenseReversalService.java`
 - `expense-service/.../reversal/ReversalReRequestSweep.java`
+- `expense-service/.../entity/ExpenseEntity.java`, `ExpenseReversal.java` — the transitions and both versions
+- `expense-service/.../config/KafkaConsumerConfig.java` — the reply listener's error handler
+- `expense-service/.../entity/ExpenseConcurrencyTest.java`, `ExpenseReversalConcurrencyTest.java`, `config/ReversalReplyErrorHandlerTest.java`
 - `settlement-service/.../service/ReversalDecisionService.java`
 - `settlement-service/.../entity/SettlementConcurrencyTest.java`
