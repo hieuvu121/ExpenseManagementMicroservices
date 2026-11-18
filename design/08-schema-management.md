@@ -59,6 +59,17 @@ Not everything needs help: adding `@Version` produced `bigint NOT NULL` and
 MySQL backfilled existing rows with `0` unaided, verified against the live
 stack.
 
+The expense-side versions do not rely on that. `expense.version` and
+`expense_reversal.version` are `Long` with
+`columnDefinition = "bigint not null default 0"`, because a `NULL` version on a
+row that already exists makes Hibernate treat the entity as unsaved, and
+`merge()` would try to insert it again. Verified for `expense` on 2026-11-18 by
+building the pre-`@Version` code, letting it create the table, inserting a row,
+then starting the current code: the column arrived as `bigint NOT NULL DEFAULT
+0`, the old row read `0`, and a conditional `UPDATE ... WHERE version = 0`
+matched once and then not again. `expense_reversal` uses the identical
+definition and was not separately run against MySQL.
+
 ## The recommendation
 
 **Adopt Flyway and switch to `ddl-auto=validate`.** One dependency, a baseline

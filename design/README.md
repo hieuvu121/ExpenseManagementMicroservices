@@ -18,6 +18,7 @@ here too.
 | 7 | [Security](07-security.md) | Edge JWT validation, identity propagation, per-service authorization |
 | 8 | [Schema management](08-schema-management.md) | What `ddl-auto=update` will and will not do, and the bugs that came from it |
 | 9 | [Performance & resilience](09-performance-and-resilience.md) | Admission control, query shape, the measured baseline |
+| 10 | [Aggregates](10-aggregates.md) | The expense aggregate: invariants versus preconditions, why splits go through the root |
 
 ## The shape of the system in one paragraph
 
@@ -33,3 +34,5 @@ only flow that coordinates two services is the expense reversal saga.
 Notes 1 and 2 describe the architecture. Notes 3, 4 and 5 are a sequence: the
 outbox makes publishing reliable, which creates duplicates, which idempotency
 absorbs, and the saga is built on all three. Notes 6 to 9 are cross-cutting.
+Note 10 is the domain model inside expense-service that the saga's guards
+live on.
